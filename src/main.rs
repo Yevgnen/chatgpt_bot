@@ -1,17 +1,24 @@
+use std::sync::Arc;
+use std::{collections::HashMap, sync::Mutex};
+
+use async_openai::types::ChatCompletionRequestMessage;
 use async_openai::{
     types::{ChatCompletionRequestMessageArgs, CreateChatCompletionRequestArgs, Role},
     Client,
 };
 use teloxide::prelude::*;
 
-async fn request_chat_completion(client: &Client, text: &str, model: Option<&str>) -> String {
+type ChatMessages = Vec<ChatCompletionRequestMessage>;
+type ChatHistories = HashMap<ChatId, ChatMessages>;
+
+async fn request_chat_completion(
+    client: &Client,
+    messages: ChatMessages,
+    model: Option<&str>,
+) -> String {
     let request = CreateChatCompletionRequestArgs::default()
         .model(model.unwrap_or("gpt-3.5-turbo"))
-        .messages([ChatCompletionRequestMessageArgs::default()
-            .role(Role::User)
-            .content(text)
-            .build()
-            .unwrap()])
+        .messages(messages)
         .build()
         .unwrap();
 
@@ -27,19 +34,60 @@ async fn main() {
     let bot = Bot::from_env();
     let client = Client::new();
 
-    teloxide::repl(bot, move |bot: Bot, msg: Message| {
-        let client = client.clone();
+    let chat_histories = Arc::new(Mutex::new(ChatHistories::new()));
 
-        async move {
-            let text = msg.text().unwrap();
-            log::info!("Receive message user: {}, content: {}", msg.chat.id, text);
+    let handler = Update::filter_message().endpoint(
+        move |bot: Bot, chat_histories: Arc<Mutex<ChatHistories>>, msg: Message| {
+            let client = client.clone();
 
-            let response = request_chat_completion(&client, text, None).await;
+            let content = msg.text().unwrap();
+            log::info!(
+                "Receive message user: {}, content: {}",
+                msg.chat.id,
+                content
+            );
 
-            bot.send_message(msg.chat.id, response).await?;
+            let hists;
+            {
+                let mut guard = chat_histories.lock().unwrap();
+                let messages = guard.entry(msg.chat.id).or_default();
+                messages.push(
+                    ChatCompletionRequestMessageArgs::default()
+                        .role(Role::User)
+                        .content(content)
+                        .build()
+                        .unwrap(),
+                );
+                hists = messages.clone();
+            }
 
-            Ok(())
-        }
-    })
-    .await;
+            async move {
+                let response = request_chat_completion(&client, hists, None).await;
+
+                {
+                    let mut guard = chat_histories.lock().unwrap();
+                    let messages = guard.entry(msg.chat.id).or_default();
+                    messages.push(
+                        ChatCompletionRequestMessageArgs::default()
+                            .role(Role::Assistant)
+                            .content(response.clone())
+                            .build()
+                            .unwrap(),
+                    );
+                }
+
+                bot.send_message(msg.chat.id, response).await?;
+
+                respond(())
+            }
+        },
+    );
+
+    Dispatcher::builder(bot, handler)
+        // Pass the shared state to the handler as a dependency.
+        .dependencies(dptree::deps![chat_histories])
+        .enable_ctrlc_handler()
+        .build()
+        .dispatch()
+        .await;
 }
