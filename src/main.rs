@@ -11,6 +11,8 @@ use teloxide::{prelude::*, utils::command::BotCommands};
 
 type ChatMessages = Vec<ChatCompletionRequestMessage>;
 type ChatHistories = HashMap<ChatId, ChatMessages>;
+type ChatHistoryState = Arc<Mutex<ChatHistories>>;
+type HandleResult = Result<(), Box<dyn Error + Send + Sync>>;
 
 async fn request_chat_completion(
     client: &Client,
@@ -31,10 +33,10 @@ async fn request_chat_completion(
 async fn complete_chat(
     bot: Bot,
     client: Client,
-    chat_histories: Arc<Mutex<ChatHistories>>,
+    chat_histories: ChatHistoryState,
     msg: Message,
     content: String,
-) -> Result<(), Box<dyn Error + Send + Sync>> {
+) -> HandleResult {
     log::info!(
         "Receive message user: {}, content: {}",
         msg.chat.id,
@@ -78,10 +80,10 @@ async fn complete_chat(
 
 async fn set_prompt(
     bot: Bot,
-    chat_histories: Arc<Mutex<ChatHistories>>,
+    chat_histories: ChatHistoryState,
     msg: Message,
     prompt: String,
-) -> Result<(), Box<dyn Error + Send + Sync>> {
+) -> HandleResult {
     log::info!("Set prompt user: {}, prompt: {}", msg.chat.id, prompt);
 
     {
@@ -104,11 +106,7 @@ async fn set_prompt(
     Ok(())
 }
 
-async fn view_histories(
-    bot: Bot,
-    chat_histories: Arc<Mutex<ChatHistories>>,
-    msg: Message,
-) -> Result<(), Box<dyn Error + Send + Sync>> {
+async fn view_histories(bot: Bot, chat_histories: ChatHistoryState, msg: Message) -> HandleResult {
     let content = {
         let mut guard = chat_histories.lock().unwrap();
         let messages = guard.entry(msg.chat.id).or_default();
@@ -130,11 +128,7 @@ async fn view_histories(
     Ok(())
 }
 
-async fn clear_history(
-    bot: Bot,
-    chat_histories: Arc<Mutex<ChatHistories>>,
-    msg: Message,
-) -> Result<(), Box<dyn Error + Send + Sync>> {
+async fn clear_history(bot: Bot, chat_histories: ChatHistoryState, msg: Message) -> HandleResult {
     {
         let mut guard = chat_histories.lock().unwrap();
         let messages = guard.entry(msg.chat.id).or_default();
@@ -151,10 +145,10 @@ async fn clear_history(
 async fn handle_command(
     bot: Bot,
     client: Client,
-    chat_histories: Arc<Mutex<ChatHistories>>,
+    chat_histories: ChatHistoryState,
     msg: Message,
     cmd: Command,
-) -> Result<(), Box<dyn Error + Send + Sync>> {
+) -> HandleResult {
     match cmd {
         Command::Help => {
             bot.send_message(msg.chat.id, Command::descriptions().to_string())
