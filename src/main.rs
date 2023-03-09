@@ -7,7 +7,7 @@ use async_openai::{
     types::{ChatCompletionRequestMessageArgs, CreateChatCompletionRequestArgs, Role},
     Client,
 };
-use teloxide::prelude::*;
+use teloxide::{prelude::*, utils::command::BotCommands};
 
 type ChatMessages = Vec<ChatCompletionRequestMessage>;
 type ChatHistories = HashMap<ChatId, ChatMessages>;
@@ -32,19 +32,15 @@ async fn complete_chat(
     bot: Bot,
     client: Client,
     chat_histories: Arc<Mutex<ChatHistories>>,
-    msg: Message,
+    id: ChatId,
+    content: String,
 ) -> Result<(), Box<dyn Error + Send + Sync>> {
-    let content = msg.text().unwrap();
-    log::info!(
-        "Receive message user: {}, content: {}",
-        msg.chat.id,
-        content
-    );
+    log::info!("Receive message user: {}, content: {}", id, content);
 
     let hists;
     {
         let mut guard = chat_histories.lock().unwrap();
-        let messages = guard.entry(msg.chat.id).or_default();
+        let messages = guard.entry(id).or_default();
         messages.push(
             ChatCompletionRequestMessageArgs::default()
                 .role(Role::User)
@@ -59,7 +55,7 @@ async fn complete_chat(
 
     {
         let mut guard = chat_histories.lock().unwrap();
-        let messages = guard.entry(msg.chat.id).or_default();
+        let messages = guard.entry(id).or_default();
         messages.push(
             ChatCompletionRequestMessageArgs::default()
                 .role(Role::Assistant)
@@ -69,9 +65,71 @@ async fn complete_chat(
         );
     }
 
-    bot.send_message(msg.chat.id, response).await?;
+    bot.send_message(id, response).await?;
 
     Ok(())
+}
+
+fn set_prompt(chat_histories: Arc<Mutex<ChatHistories>>, id: ChatId, prompt: String) {
+    log::info!("Set prompt user: {}, prompt: {}", id, prompt);
+
+    let mut guard = chat_histories.lock().unwrap();
+    let messages = guard.entry(id).or_default();
+    messages.clear();
+    messages.push(
+        ChatCompletionRequestMessageArgs::default()
+            .role(Role::System)
+            .content(prompt)
+            .build()
+            .unwrap(),
+    );
+}
+
+fn clear_history(chat_histories: Arc<Mutex<ChatHistories>>, id: ChatId) {
+    let mut guard = chat_histories.lock().unwrap();
+    let messages = guard.entry(id).or_default();
+    messages.clear();
+}
+
+async fn handle_command(
+    bot: Bot,
+    client: Client,
+    chat_histories: Arc<Mutex<ChatHistories>>,
+    msg: Message,
+    cmd: Command,
+) -> Result<(), Box<dyn Error + Send + Sync>> {
+    match cmd {
+        Command::Help => {
+            bot.send_message(msg.chat.id, Command::descriptions().to_string())
+                .await?;
+        }
+        Command::Prompt(prompt) => {
+            set_prompt(chat_histories, msg.chat.id, prompt);
+        }
+        Command::Chat(content) => {
+            complete_chat(bot, client, chat_histories, msg.chat.id, content).await?;
+        }
+        Command::Clear => {
+            clear_history(chat_histories, msg.chat.id);
+        }
+    }
+    Ok(())
+}
+
+#[derive(BotCommands, Clone, Debug)]
+#[command(
+    rename_rule = "lowercase",
+    description = "These commands are supported:"
+)]
+enum Command {
+    #[command(description = "display this text.")]
+    Help,
+    #[command(description = "set prompt text.")]
+    Prompt(String),
+    #[command(description = "chat with gpt.")]
+    Chat(String),
+    #[command(description = "clear history chats.")]
+    Clear,
 }
 
 #[tokio::main]
@@ -83,10 +141,13 @@ async fn main() {
     let client = Client::new();
     let chat_histories = Arc::new(Mutex::new(ChatHistories::new()));
 
-    let handler = Update::filter_message().endpoint(complete_chat);
+    let handler = Update::filter_message().branch(
+        dptree::entry()
+            .filter_command::<Command>()
+            .endpoint(handle_command),
+    );
 
     Dispatcher::builder(bot, handler)
-        // Pass the shared state to the handler as a dependency.
         .dependencies(dptree::deps![client, chat_histories])
         .enable_ctrlc_handler()
         .build()
