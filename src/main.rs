@@ -85,6 +85,30 @@ fn set_prompt(chat_histories: Arc<Mutex<ChatHistories>>, id: ChatId, prompt: Str
     );
 }
 
+async fn view_histories(
+    bot: Bot,
+    chat_histories: Arc<Mutex<ChatHistories>>,
+    id: ChatId,
+) -> Result<(), Box<dyn Error + Send + Sync>> {
+    let content = {
+        let mut guard = chat_histories.lock().unwrap();
+        let messages = guard.entry(id).or_default();
+        if messages.is_empty() {
+            "Empty chat history.".to_owned()
+        } else {
+            messages
+                .iter()
+                .map(|msg| format!("{}: {}", msg.role, msg.content.trim()))
+                .collect::<Vec<String>>()
+                .join("\n\n")
+        }
+    };
+
+    bot.send_message(id, content).await?;
+
+    Ok(())
+}
+
 fn clear_history(chat_histories: Arc<Mutex<ChatHistories>>, id: ChatId) {
     let mut guard = chat_histories.lock().unwrap();
     let messages = guard.entry(id).or_default();
@@ -109,6 +133,9 @@ async fn handle_command(
         Command::Chat(content) => {
             complete_chat(bot, client, chat_histories, msg.chat.id, content).await?;
         }
+        Command::View => {
+            view_histories(bot, chat_histories, msg.chat.id).await?;
+        }
         Command::Clear => {
             clear_history(chat_histories, msg.chat.id);
         }
@@ -128,6 +155,8 @@ enum Command {
     Prompt(String),
     #[command(description = "chat with gpt.")]
     Chat(String),
+    #[command(description = "view chat histories.")]
+    View,
     #[command(description = "clear history chats.")]
     Clear,
 }
