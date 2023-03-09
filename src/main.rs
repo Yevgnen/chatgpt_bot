@@ -32,15 +32,19 @@ async fn complete_chat(
     bot: Bot,
     client: Client,
     chat_histories: Arc<Mutex<ChatHistories>>,
-    id: ChatId,
+    msg: Message,
     content: String,
 ) -> Result<(), Box<dyn Error + Send + Sync>> {
-    log::info!("Receive message user: {}, content: {}", id, content);
+    log::info!(
+        "Receive message user: {}, content: {}",
+        msg.chat.id,
+        content
+    );
 
     let hists;
     {
         let mut guard = chat_histories.lock().unwrap();
-        let messages = guard.entry(id).or_default();
+        let messages = guard.entry(msg.chat.id).or_default();
         messages.push(
             ChatCompletionRequestMessageArgs::default()
                 .role(Role::User)
@@ -55,7 +59,7 @@ async fn complete_chat(
 
     {
         let mut guard = chat_histories.lock().unwrap();
-        let messages = guard.entry(id).or_default();
+        let messages = guard.entry(msg.chat.id).or_default();
         messages.push(
             ChatCompletionRequestMessageArgs::default()
                 .role(Role::Assistant)
@@ -65,34 +69,49 @@ async fn complete_chat(
         );
     }
 
-    bot.send_message(id, response).await?;
+    bot.send_message(msg.chat.id, response)
+        .reply_to_message_id(msg.id)
+        .await?;
 
     Ok(())
 }
 
-fn set_prompt(chat_histories: Arc<Mutex<ChatHistories>>, id: ChatId, prompt: String) {
-    log::info!("Set prompt user: {}, prompt: {}", id, prompt);
+async fn set_prompt(
+    bot: Bot,
+    chat_histories: Arc<Mutex<ChatHistories>>,
+    msg: Message,
+    prompt: String,
+) -> Result<(), Box<dyn Error + Send + Sync>> {
+    log::info!("Set prompt user: {}, prompt: {}", msg.chat.id, prompt);
 
-    let mut guard = chat_histories.lock().unwrap();
-    let messages = guard.entry(id).or_default();
-    messages.clear();
-    messages.push(
-        ChatCompletionRequestMessageArgs::default()
-            .role(Role::System)
-            .content(prompt)
-            .build()
-            .unwrap(),
-    );
+    {
+        let mut guard = chat_histories.lock().unwrap();
+        let messages = guard.entry(msg.chat.id).or_default();
+        messages.clear();
+        messages.push(
+            ChatCompletionRequestMessageArgs::default()
+                .role(Role::System)
+                .content(prompt)
+                .build()
+                .unwrap(),
+        );
+    }
+
+    bot.send_message(msg.chat.id, "Prompt set.")
+        .reply_to_message_id(msg.id)
+        .await?;
+
+    Ok(())
 }
 
 async fn view_histories(
     bot: Bot,
     chat_histories: Arc<Mutex<ChatHistories>>,
-    id: ChatId,
+    msg: Message,
 ) -> Result<(), Box<dyn Error + Send + Sync>> {
     let content = {
         let mut guard = chat_histories.lock().unwrap();
-        let messages = guard.entry(id).or_default();
+        let messages = guard.entry(msg.chat.id).or_default();
         if messages.is_empty() {
             "Empty chat history.".to_owned()
         } else {
@@ -104,15 +123,29 @@ async fn view_histories(
         }
     };
 
-    bot.send_message(id, content).await?;
+    bot.send_message(msg.chat.id, content)
+        .reply_to_message_id(msg.id)
+        .await?;
 
     Ok(())
 }
 
-fn clear_history(chat_histories: Arc<Mutex<ChatHistories>>, id: ChatId) {
-    let mut guard = chat_histories.lock().unwrap();
-    let messages = guard.entry(id).or_default();
-    messages.clear();
+async fn clear_history(
+    bot: Bot,
+    chat_histories: Arc<Mutex<ChatHistories>>,
+    msg: Message,
+) -> Result<(), Box<dyn Error + Send + Sync>> {
+    {
+        let mut guard = chat_histories.lock().unwrap();
+        let messages = guard.entry(msg.chat.id).or_default();
+        messages.clear();
+    }
+
+    bot.send_message(msg.chat.id, "Chat histories cleared.")
+        .reply_to_message_id(msg.id)
+        .await?;
+
+    Ok(())
 }
 
 async fn handle_command(
@@ -128,16 +161,16 @@ async fn handle_command(
                 .await?;
         }
         Command::Prompt(prompt) => {
-            set_prompt(chat_histories, msg.chat.id, prompt);
+            set_prompt(bot, chat_histories, msg, prompt).await?;
         }
         Command::Chat(content) => {
-            complete_chat(bot, client, chat_histories, msg.chat.id, content).await?;
+            complete_chat(bot, client, chat_histories, msg, content).await?;
         }
         Command::View => {
-            view_histories(bot, chat_histories, msg.chat.id).await?;
+            view_histories(bot, chat_histories, msg).await?;
         }
         Command::Clear => {
-            clear_history(chat_histories, msg.chat.id);
+            clear_history(bot, chat_histories, msg).await?;
         }
     }
     Ok(())
