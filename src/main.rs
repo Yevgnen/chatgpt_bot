@@ -14,6 +14,8 @@ type ChatHistories = HashMap<ChatId, ChatMessages>;
 type State = Arc<Mutex<ChatHistories>>;
 type HandleResult = Result<(), Box<dyn Error + Send + Sync>>;
 
+const MODEL: &str = "gpt-3.5-turbo";
+
 async fn complete_chat(
     content: String,
     bot: Bot,
@@ -49,7 +51,7 @@ async fn complete_chat(
     let msg_id = response.id;
 
     let request = CreateChatCompletionRequestArgs::default()
-        .model("gpt-3.5-turbo")
+        .model(MODEL)
         .messages(hists)
         .build()
         .unwrap();
