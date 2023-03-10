@@ -1,0 +1,37 @@
+#+title: README
+#+options: ^:nil author:nil title:nil
+
+* Table of Contents :TOC:
+- [[#introduction][Introduction]]
+- [[#build--run][Build & Run]]
+- [[#support-commands][Support commands]]
+
+* Introduction
+
+Simple ChatGPT Telegram bot written in Rust.
+
+* Build & Run
+
+#+begin_src rustic
+OPENAI_API_KEY=[YOUR_API_KEY] TELOXIDE_TOKEN=[YOUR_TOKEN] cargo run --release
+#+end_src
+
+Replace ~[YOUR_API_KEY]~ with your OpenAI API key and ~[TELOXIDE_TOKEN]~ with you bot token.
+
+* Support commands
+
+Type ~/help~ the chat window to see supported commands:
+
+#+begin_example
+These commands are supported:
+
+/help — display this text.
+/prompt — set prompt text.
+/chat — chat with gpt.
+/view — view chat histories.
+/clear — clear history chats.
+#+end_example
+
+# Local Variables:
+# eval: (add-hook 'before-save-hook (lambda nil (org-pandoc-export-to-gfm)) nil t)
+# End:
