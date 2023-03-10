@@ -23,11 +23,7 @@ async fn complete_chat(
     state: State,
     msg: Message,
 ) -> HandleResult {
-    log::info!(
-        "Receive message user: {}, content: {}",
-        msg.chat.id,
-        content
-    );
+    log::info!("Complete chat, user: {}, content: {}", msg.chat.id, content);
 
     let hists;
     {
@@ -93,7 +89,7 @@ async fn complete_chat(
 }
 
 async fn set_prompt(prompt: String, bot: Bot, state: State, msg: Message) -> HandleResult {
-    log::info!("Set prompt user: {}, prompt: {}", msg.chat.id, prompt);
+    log::info!("Set prompt, user: {}, prompt: {}", msg.chat.id, prompt);
 
     {
         let mut guard = state.lock().unwrap();
