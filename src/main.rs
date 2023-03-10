@@ -120,7 +120,7 @@ async fn view_histories(bot: Bot, state: State, msg: Message) -> HandleResult {
         } else {
             messages
                 .iter()
-                .map(|msg| format!("{}: {}", msg.role, msg.content.trim()))
+                .map(|msg| format!("[{}]: {}", msg.role, msg.content.trim()))
                 .collect::<Vec<String>>()
                 .join("\n\n")
         }
