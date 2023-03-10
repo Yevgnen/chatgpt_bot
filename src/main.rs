@@ -54,7 +54,6 @@ async fn complete_chat(
     let mut stream = client.chat().create_stream(request).await?;
 
     let mut chunks = Vec::new();
-
     let mut count = 0;
     while let Some(result) = stream.next().await {
         if let Some(ref content) = result.unwrap().choices.get(0).unwrap().delta.content {
@@ -73,17 +72,15 @@ async fn complete_chat(
         .await
         .unwrap();
 
-    {
-        let mut guard = state.lock().unwrap();
-        let messages = guard.entry(msg.chat.id).or_default();
-        messages.push(
-            ChatCompletionRequestMessageArgs::default()
-                .role(Role::Assistant)
-                .content(chunks.join(""))
-                .build()
-                .unwrap(),
-        );
-    }
+    let mut guard = state.lock().unwrap();
+    let messages = guard.entry(msg.chat.id).or_default();
+    messages.push(
+        ChatCompletionRequestMessageArgs::default()
+            .role(Role::Assistant)
+            .content(chunks.join(""))
+            .build()
+            .unwrap(),
+    );
 
     Ok(())
 }
