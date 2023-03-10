@@ -11,15 +11,15 @@ use teloxide::{prelude::*, utils::command::BotCommands};
 
 type ChatMessages = Vec<ChatCompletionRequestMessage>;
 type ChatHistories = HashMap<ChatId, ChatMessages>;
-type ChatHistoryState = Arc<Mutex<ChatHistories>>;
+type State = Arc<Mutex<ChatHistories>>;
 type HandleResult = Result<(), Box<dyn Error + Send + Sync>>;
 
-async fn complete_chat_stream(
+async fn complete_chat(
+    content: String,
     bot: Bot,
     client: Client,
-    chat_histories: ChatHistoryState,
+    state: State,
     msg: Message,
-    content: String,
 ) -> HandleResult {
     log::info!(
         "Receive message user: {}, content: {}",
@@ -29,7 +29,7 @@ async fn complete_chat_stream(
 
     let hists;
     {
-        let mut guard = chat_histories.lock().unwrap();
+        let mut guard = state.lock().unwrap();
         let messages = guard.entry(msg.chat.id).or_default();
         messages.push(
             ChatCompletionRequestMessageArgs::default()
@@ -76,7 +76,7 @@ async fn complete_chat_stream(
         .unwrap();
 
     {
-        let mut guard = chat_histories.lock().unwrap();
+        let mut guard = state.lock().unwrap();
         let messages = guard.entry(msg.chat.id).or_default();
         messages.push(
             ChatCompletionRequestMessageArgs::default()
@@ -90,16 +90,11 @@ async fn complete_chat_stream(
     Ok(())
 }
 
-async fn set_prompt(
-    bot: Bot,
-    chat_histories: ChatHistoryState,
-    msg: Message,
-    prompt: String,
-) -> HandleResult {
+async fn set_prompt(prompt: String, bot: Bot, state: State, msg: Message) -> HandleResult {
     log::info!("Set prompt user: {}, prompt: {}", msg.chat.id, prompt);
 
     {
-        let mut guard = chat_histories.lock().unwrap();
+        let mut guard = state.lock().unwrap();
         let messages = guard.entry(msg.chat.id).or_default();
         messages.clear();
         messages.push(
@@ -118,9 +113,9 @@ async fn set_prompt(
     Ok(())
 }
 
-async fn view_histories(bot: Bot, chat_histories: ChatHistoryState, msg: Message) -> HandleResult {
+async fn view_histories(bot: Bot, state: State, msg: Message) -> HandleResult {
     let content = {
-        let mut guard = chat_histories.lock().unwrap();
+        let mut guard = state.lock().unwrap();
         let messages = guard.entry(msg.chat.id).or_default();
         if messages.is_empty() {
             "Empty chat history.".to_owned()
@@ -140,9 +135,9 @@ async fn view_histories(bot: Bot, chat_histories: ChatHistoryState, msg: Message
     Ok(())
 }
 
-async fn clear_history(bot: Bot, chat_histories: ChatHistoryState, msg: Message) -> HandleResult {
+async fn clear_history(bot: Bot, state: State, msg: Message) -> HandleResult {
     {
-        let mut guard = chat_histories.lock().unwrap();
+        let mut guard = state.lock().unwrap();
         let messages = guard.entry(msg.chat.id).or_default();
         messages.clear();
     }
@@ -157,7 +152,7 @@ async fn clear_history(bot: Bot, chat_histories: ChatHistoryState, msg: Message)
 async fn handle_command(
     bot: Bot,
     client: Client,
-    chat_histories: ChatHistoryState,
+    state: State,
     msg: Message,
     cmd: Command,
 ) -> HandleResult {
@@ -167,16 +162,16 @@ async fn handle_command(
                 .await?;
         }
         Command::Prompt(prompt) => {
-            set_prompt(bot, chat_histories, msg, prompt).await?;
+            set_prompt(prompt, bot, state, msg).await?;
         }
         Command::Chat(content) => {
-            complete_chat_stream(bot, client, chat_histories, msg, content).await?;
+            complete_chat(content, bot, client, state, msg).await?;
         }
         Command::View => {
-            view_histories(bot, chat_histories, msg).await?;
+            view_histories(bot, state, msg).await?;
         }
         Command::Clear => {
-            clear_history(bot, chat_histories, msg).await?;
+            clear_history(bot, state, msg).await?;
         }
     }
     Ok(())
@@ -207,7 +202,7 @@ async fn main() {
     let bot = Bot::from_env();
 
     let client = Client::new();
-    let chat_histories = Arc::new(Mutex::new(ChatHistories::new()));
+    let state = Arc::new(Mutex::new(ChatHistories::new()));
 
     let handler = Update::filter_message().branch(
         dptree::entry()
@@ -216,7 +211,7 @@ async fn main() {
     );
 
     Dispatcher::builder(bot, handler)
-        .dependencies(dptree::deps![client, chat_histories])
+        .dependencies(dptree::deps![client, state])
         .enable_ctrlc_handler()
         .build()
         .dispatch()
