@@ -1,12 +1,12 @@
-use std::error::Error;
-use std::sync::Arc;
-use std::{collections::HashMap, sync::Mutex};
-
 use async_openai::types::ChatCompletionRequestMessage;
 use async_openai::{
     types::{ChatCompletionRequestMessageArgs, CreateChatCompletionRequestArgs, Role},
     Client,
 };
+use futures::StreamExt;
+use std::error::Error;
+use std::sync::Arc;
+use std::{collections::HashMap, sync::Mutex};
 use teloxide::{prelude::*, utils::command::BotCommands};
 
 type ChatMessages = Vec<ChatCompletionRequestMessage>;
@@ -14,23 +14,7 @@ type ChatHistories = HashMap<ChatId, ChatMessages>;
 type ChatHistoryState = Arc<Mutex<ChatHistories>>;
 type HandleResult = Result<(), Box<dyn Error + Send + Sync>>;
 
-async fn request_chat_completion(
-    client: &Client,
-    messages: ChatMessages,
-    model: Option<&str>,
-) -> String {
-    let request = CreateChatCompletionRequestArgs::default()
-        .model(model.unwrap_or("gpt-3.5-turbo"))
-        .messages(messages)
-        .build()
-        .unwrap();
-
-    let response = client.chat().create(request).await.unwrap();
-
-    response.choices.get(0).unwrap().message.content.clone()
-}
-
-async fn complete_chat(
+async fn complete_chat_stream(
     bot: Bot,
     client: Client,
     chat_histories: ChatHistoryState,
@@ -57,7 +41,39 @@ async fn complete_chat(
         hists = messages.clone();
     }
 
-    let response = request_chat_completion(&client, hists, None).await;
+    let response = bot
+        .send_message(msg.chat.id, "💭")
+        .reply_to_message_id(msg.id)
+        .await
+        .unwrap();
+    let msg_id = response.id;
+
+    let request = CreateChatCompletionRequestArgs::default()
+        .model("gpt-3.5-turbo")
+        .messages(hists)
+        .build()
+        .unwrap();
+    let mut stream = client.chat().create_stream(request).await?;
+
+    let mut chunks = Vec::new();
+
+    let mut count = 0;
+    while let Some(result) = stream.next().await {
+        if let Some(ref content) = result.unwrap().choices.get(0).unwrap().delta.content {
+            chunks.push(content.to_owned());
+            if !content.trim().is_empty() {
+                count += 1;
+                if count % 20 == 0 {
+                    bot.edit_message_text(msg.chat.id, msg_id, chunks.join(""))
+                        .await
+                        .unwrap();
+                }
+            }
+        }
+    }
+    bot.edit_message_text(msg.chat.id, msg_id, chunks.join(""))
+        .await
+        .unwrap();
 
     {
         let mut guard = chat_histories.lock().unwrap();
@@ -65,15 +81,11 @@ async fn complete_chat(
         messages.push(
             ChatCompletionRequestMessageArgs::default()
                 .role(Role::Assistant)
-                .content(response.clone())
+                .content(chunks.join(""))
                 .build()
                 .unwrap(),
         );
     }
-
-    bot.send_message(msg.chat.id, response)
-        .reply_to_message_id(msg.id)
-        .await?;
 
     Ok(())
 }
@@ -158,7 +170,7 @@ async fn handle_command(
             set_prompt(bot, chat_histories, msg, prompt).await?;
         }
         Command::Chat(content) => {
-            complete_chat(bot, client, chat_histories, msg, content).await?;
+            complete_chat_stream(bot, client, chat_histories, msg, content).await?;
         }
         Command::View => {
             view_histories(bot, chat_histories, msg).await?;
