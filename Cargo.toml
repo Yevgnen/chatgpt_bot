@@ -11,4 +11,5 @@ futures = "0.3.26"
 log = "0.4.17"
 pretty_env_logger = "0.4.0"
 teloxide = { version = "0.12.2", features = ["macros"] }
+thiserror = "1.0.40"
 tokio = { version = "1.26.0", features = ["rt-multi-thread", "macros"] }
